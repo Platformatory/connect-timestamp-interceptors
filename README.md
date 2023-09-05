@@ -25,14 +25,14 @@ Firstly, you need to set up a Kafka cluster. Confluent's quick start guide can b
 Next, you need to configure your producer and consumer to use the interceptors. For the producer:
 
 ```java
-props.put(ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, "com.platformatory.vivek.SourceTimeProducerInterceptor");
+props.put(ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, "com.platformatory.kafka.SourceTimeProducerInterceptor");
 
 ```
 
 For the Consumer:
 
 ```java
-props.put(ConsumerConfig.INTERCEPTOR_CLASSES_CONFIG, "com.platformatory.vivek.SinkTimeConsumerInterceptor");
+props.put(ConsumerConfig.INTERCEPTOR_CLASSES_CONFIG, "com.platformatory.kafka.SinkTimeConsumerInterceptor");
 
 ```
 You can then run your producer and consumer as normal, and they will use the interceptors.

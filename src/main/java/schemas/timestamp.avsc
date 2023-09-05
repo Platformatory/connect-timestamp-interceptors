@@ -1,0 +1,10 @@
+{
+    "type": "record",
+    "name": "com.platformatory.kafka.connect.latencyanalyzer.Timestamps",
+    "fields": [
+        {"name": "correlation_id", "type": "string"},
+        {"name": "connect_pipeline_id", "type": "string"},
+        {"name": "timestamp_type", "type": "string"},
+        {"name": "timestamp", "type": "long"}
+    ]
+}
