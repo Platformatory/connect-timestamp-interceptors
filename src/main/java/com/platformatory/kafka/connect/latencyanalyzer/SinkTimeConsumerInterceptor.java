@@ -66,7 +66,7 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, io.confluent.kafka.serializers.KafkaAvroSerializer.class);
 
-        log.info("Producer configurations - "+props.toString());
+        log.debug("Latency Consumer Interceptor Producer configurations - "+props.toString());
 
         producer = new KafkaProducer<String, GenericRecord>(props);
 
@@ -104,31 +104,30 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
     public void onCommit(Map<TopicPartition, OffsetAndMetadata> map) {
         Long commitTime = System.currentTimeMillis();
 
-        // TODO: Check OffsetAndMetadata to verify if offset was committed
-        for (Map.Entry<Long, String> entry : offsetToUUID.entrySet()) {
-            Long offset = entry.getKey();
-            String uuid = entry.getValue();
+        for(Map.Entry<TopicPartition, OffsetAndMetadata> entry : map.entrySet()) {
+            Long offset = entry.getValue().offset();
+            String correlation_id = offsetToUUID.get(offset);
 
-            GenericRecord avroRecord = new GenericData.Record(schema);
-            avroRecord.put("correlation_id", uuid);
-            avroRecord.put("connect_pipeline_id", connectPipelineID);
-            avroRecord.put("timestamp_type", telemetryType);
-            avroRecord.put("timestamp", commitTime);
+            if (correlation_id != null) {
+                GenericRecord avroRecord = new GenericData.Record(schema);
+                avroRecord.put("correlation_id", correlation_id);
+                avroRecord.put("connect_pipeline_id", connectPipelineID);
+                avroRecord.put("timestamp_type", telemetryType);
+                avroRecord.put("timestamp", commitTime);
 
-            try {
-                producer.send(new ProducerRecord<String, GenericRecord> (latencyTopic, connectPipelineID, avroRecord));
-            } catch(SerializationException e) {
-                // may need to do something with it
-                // TODO: Handle exception
-                e.printStackTrace();
-            }
-            finally {
-                producer.flush();
+                try {
+                    producer.send(new ProducerRecord<String, GenericRecord> (latencyTopic, connectPipelineID, avroRecord));
+                    offsetToUUID.remove(offset);
+                } catch(SerializationException e) {
+                    // may need to do something with it
+                    // TODO: Handle exception
+                    e.printStackTrace();
+                }
+                finally {
+                    producer.flush();
+                }
             }
         }
-
-        // Clear the offsetToUUID map to save memory
-        offsetToUUID.clear();
 
     }
 
