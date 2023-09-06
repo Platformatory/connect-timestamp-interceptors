@@ -44,12 +44,18 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
 
     @Override
     public void configure(Map<String, ?> configs) {
-        String schemaString = "{\"type\":\"record\"," +
-                    "\"name\":\"com.platformatory.kafka.connect.latencyanalyzer.Timestamps\"," +
-                    "\"fields\":[{\"name\": \"correlation_id\", \"type\": \"string\"}," +
-        "{\"name\": \"connect_pipeline_id\", \"type\": \"string\"}," +
-        "{\"name\": \"timestamp_type\", \"type\": \"string\"}," +
-        "{\"name\": \"timestamp\", \"type\": \"long\"}]}";
+        String schemaString = null;
+        try {
+            InputStream inputStream = this.getClass()
+                .getClassLoader()
+                .getResourceAsStream("schemas/timestamp.avsc");
+            schemaString =
+                new BufferedReader(new InputStreamReader(inputStream,
+                    StandardCharsets.UTF_8)).lines().collect(Collectors.joining());
+            inputStream.close();
+        } catch(IOException e) {
+            e.printStackTrace();
+        }
         schema = new Schema.Parser().parse(schemaString);
 
         Map<String, String> producerProps = new HashMap<>();
