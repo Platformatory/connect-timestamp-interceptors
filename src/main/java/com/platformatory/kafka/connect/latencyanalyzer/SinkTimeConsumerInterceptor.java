@@ -136,6 +136,7 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
                     e.printStackTrace();
                 }
                 finally {
+		    log.debug("Record sent - "+ avroRecord.toString());
                     producer.flush();
                 }
             }

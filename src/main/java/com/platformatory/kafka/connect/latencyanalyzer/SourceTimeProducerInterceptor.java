@@ -170,7 +170,7 @@ public class SourceTimeProducerInterceptor implements ProducerInterceptor<String
                 e.printStackTrace();
             }
             finally {
-                // log.info("Record sent");
+                log.debug("Record sent - "+ avroRecord.toString());
                 producer.flush();
             }
         } else {
