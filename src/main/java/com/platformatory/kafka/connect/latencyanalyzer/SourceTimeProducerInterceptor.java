@@ -31,8 +31,9 @@ import org.slf4j.LoggerFactory;
 import java.util.Random;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.text.ParseException;
 
-public class SourceTimeProducerInterceptor implements ProducerInterceptor<String, byte[]> {
+public class SourceTimeProducerInterceptor implements ProducerInterceptor<byte[], byte[]> {
 
     private static final Logger log = LoggerFactory.getLogger(SourceTimeProducerInterceptor.class);
 
@@ -42,7 +43,7 @@ public class SourceTimeProducerInterceptor implements ProducerInterceptor<String
     private String sourceTimeField;
     private String sourceTimeFormat;
     private String connectPipelineID;
-    private String sourceRecordValueFormat;
+    private String sourceRecordSerializer;
     private float samplingRate;
     private Schema schema;
     private Random random;
@@ -51,7 +52,7 @@ public class SourceTimeProducerInterceptor implements ProducerInterceptor<String
     static String sourceTimeFieldConfig         = "source.time.field";
     static String sourceTimeFormatConfig        = "source.time.format";
     static String connectPipelineIDConfig       = "connect.pipeline.id";
-    static String sourceRecordValueFormatConfig = "source.value.format"; // Can only be 'json' or 'avro'
+    static String sourceRecordSerializerConfig  = "source.serializer";
     static String samplingConfig                = "sampling.rate";
 
     @Override
@@ -90,8 +91,6 @@ public class SourceTimeProducerInterceptor implements ProducerInterceptor<String
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, io.confluent.kafka.serializers.KafkaAvroSerializer.class);
 
-        log.info("Producer configurations - "+producerProps.toString());
-
         producer = new KafkaProducer<String, GenericRecord>(props);
         
 
@@ -99,62 +98,56 @@ public class SourceTimeProducerInterceptor implements ProducerInterceptor<String
         sourceTimeField = (String) configs.get(sourceTimeFieldConfig);
         sourceTimeFormat = (String) configs.get(sourceTimeFormatConfig);
         connectPipelineID = (String) configs.get(connectPipelineIDConfig);
-        sourceRecordValueFormat = (String) configs.get(sourceRecordValueFormatConfig);
+        sourceRecordSerializer = (String) configs.get(sourceRecordSerializerConfig);
         samplingRate = Float.parseFloat((String) configs.get(samplingConfig));
-        if (sourceRecordValueFormat.equalsIgnoreCase("avro")) {
+        if (sourceRecordSerializer.equalsIgnoreCase("io.confluent.connect.avro.AvroConverter")) {
             deserializer = new KafkaAvroDeserializer();
             deserializer.configure(schemaRegistryProps, false);
         }
     }
 
     @Override
-    public ProducerRecord<String, byte[]> onSend(ProducerRecord<String, byte[]> record) {
+    public ProducerRecord<byte[], byte[]> onSend(ProducerRecord<byte[], byte[]> record) {
         float randomNumber = random.nextFloat();
         if (randomNumber <= samplingRate) {
+	    byte[] objectToInspect = null;
+	    if (sourceTimeField.startsWith("key.")) {
+                objectToInspect = record.key();
+            } else if (sourceTimeField.startsWith("value.")) {
+                objectToInspect = record.value();
+            }
             String uuid = UUID.randomUUID().toString();
 
             record.headers().add("connect_latency_correlation_id", uuid.getBytes());
             
-            // TODO: JSON Path
             Long sourceTimestamp = System.currentTimeMillis();
-            if (sourceRecordValueFormat.equalsIgnoreCase("json")) {
-                String valueStr = new String(record.value());
-                ObjectMapper objectMapper = new ObjectMapper();
-                try {
-                    JsonNode jsonNode = objectMapper.readTree(valueStr);
-                    if (sourceTimeFormat != null) {
-                        log.info("sourceTimeFormatConfig - "+sourceTimeFormat);
-                        SimpleDateFormat df = new SimpleDateFormat(sourceTimeFormat);
-                        log.info("sourceTimeField - "+jsonNode.get("payload").get(sourceTimeField).textValue());
-                        Date date = df.parse(jsonNode.get("payload").get(sourceTimeField).textValue());
-                        sourceTimestamp = date.getTime();
-                        log.info("sourceTimestamp - "+sourceTimestamp);
-                    } else {
-                        sourceTimestamp = jsonNode.get("payload").get(sourceTimeField).longValue();
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            } else if (sourceRecordValueFormat.equalsIgnoreCase("avro")) {
-                ObjectMapper objectMapper = new ObjectMapper();
-                try {
-                    final Object o = deserializer.deserialize(record.topic(), record.value());
+	    switch(sourceRecordSerializer) {
+		case "io.confluent.connect.avro.AvroConverter":
+			final Object o = deserializer.deserialize(record.topic(), record.value());
+                    	GenericRecord sourceRecord = (GenericRecord) o;
+			//log.info("sourceRecord - "+sourceRecord.toString());
+			String[] fields = sourceTimeField.split("\\.");
+			Object timestamp = sourceRecord;
+			for(int i=1; i<fields.length; i++) {
+				GenericRecord genericRecord = (GenericRecord) timestamp;
+				timestamp = genericRecord.get(fields[i]);
+			}
+			if (sourceTimeFormat != null) {
+				SimpleDateFormat df = new SimpleDateFormat(sourceTimeFormat);
+				try{
+					Date date = df.parse(timestamp.toString());
+					sourceTimestamp = date.getTime();
+				} catch(ParseException e) {
+					log.warn(e.getMessage());
+					log.warn("Could not parse date from the date format "+sourceTimeFormat+" for the value "+timestamp.toString()+" Using the interceptor timestamp instead");
+				}
+			 } else {
+				sourceTimestamp = new Long(timestamp.toString()); 
+			 }
+			//log.info("sourceTimestamp - "+sourceTimestamp);
 
-                    GenericRecord sourceRecord = (GenericRecord) o;
-
-                    JsonNode jsonNode = objectMapper.readTree(sourceRecord.toString());
-                    if (sourceTimeFormat != null) {
-                        SimpleDateFormat df = new SimpleDateFormat(sourceTimeFormat);
-                        Date date = df.parse(jsonNode.get(sourceTimeField).textValue());
-                        sourceTimestamp = date.getTime();
-                    } else {
-                        sourceTimestamp = jsonNode.get(sourceTimeField).longValue();
-                    }
-                    
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
+		break;
+	    }
 
             GenericRecord avroRecord = new GenericData.Record(schema);
             avroRecord.put("correlation_id", uuid);
