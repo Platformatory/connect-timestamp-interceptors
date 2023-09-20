@@ -45,7 +45,6 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
 
     static String topicConfig             = "connect.latency.analyzer.telemetry.topic.name";
     static String connectPipelineIDConfig = "connect.pipeline.id";
-    static String telemetryTypeConfig     = "telemetry.type";
     private final ConcurrentHashMap<Long, String> offsetToUUID = new ConcurrentHashMap<>();
 
     @Override
@@ -78,19 +77,16 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, io.confluent.kafka.serializers.KafkaAvroSerializer.class);
 
-        log.debug("Latency Consumer Interceptor Producer configurations - "+props.toString());
-
         producer = new KafkaProducer<String, GenericRecord>(props);
 
         latencyTopic = (String) configs.get(topicConfig);
         connectPipelineID = (String) configs.get(connectPipelineIDConfig);
-        telemetryType = (String) configs.get(telemetryTypeConfig);
 
     }
 
     @Override
     public ConsumerRecords<String, byte[]> onConsume(ConsumerRecords<String, byte[]> records) {
-
+	Long consumeTime = System.currentTimeMillis();
         for (TopicPartition partition : records.partitions()) {
             List<ConsumerRecord<String, byte[]>> partitionRecords = records.records(partition);
 
@@ -104,6 +100,8 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
                 }
 
                 if (uuid != null) {
+		    this.produceTelemetry(uuid, "broker", record.timestamp());
+		    this.produceTelemetry(uuid, "consume", consumeTime);
                     offsetToUUID.put(record.offset(), uuid);
                 }
             }
@@ -121,25 +119,9 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
             String correlation_id = offsetToUUID.get(offset);
 
             if (correlation_id != null) {
-                GenericRecord avroRecord = new GenericData.Record(schema);
-                avroRecord.put("correlation_id", correlation_id);
-                avroRecord.put("connect_pipeline_id", connectPipelineID);
-                avroRecord.put("timestamp_type", telemetryType);
-                avroRecord.put("timestamp", commitTime);
-
-                try {
-                    producer.send(new ProducerRecord<String, GenericRecord> (latencyTopic, connectPipelineID, avroRecord));
-                    offsetToUUID.remove(offset);
-                } catch(SerializationException e) {
-                    // may need to do something with it
-                    // TODO: Handle exception
-                    e.printStackTrace();
-                }
-                finally {
-		    log.debug("Record sent - "+ avroRecord.toString());
-                    producer.flush();
-                }
-            }
+		this.produceTelemetry(correlation_id, "sink", commitTime);
+		offsetToUUID.remove(offset);
+	    }
         }
 
     }
@@ -151,5 +133,26 @@ public class SinkTimeConsumerInterceptor implements ConsumerInterceptor<String, 
             producer.flush();
             producer.close();
         }
+    }
+
+    private void produceTelemetry(String correlation_id, String timestamp_type, Long timestamp) {
+		GenericRecord avroRecord = new GenericData.Record(schema);
+                avroRecord.put("correlation_id", correlation_id);
+                avroRecord.put("connect_pipeline_id", connectPipelineID);
+                avroRecord.put("timestamp_type", timestamp_type);
+                avroRecord.put("timestamp", timestamp);
+
+                try {
+                    producer.send(new ProducerRecord<String, GenericRecord> (latencyTopic, connectPipelineID, avroRecord));
+                } catch(SerializationException e) {
+                    // may need to do something with it
+                    // TODO: Handle exception
+                    e.printStackTrace();
+                }
+                finally {
+		    log.debug("Record sent - "+ avroRecord.toString());
+                    producer.flush();
+                }
+
     }
 }
